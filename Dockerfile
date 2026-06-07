@@ -1,53 +1,82 @@
-# Dockerfile — Railway deployment (fallback if nixpacks.toml fails)
+# Dockerfile — Railway deployment
 #
-# Uses the official PHP 8.2 CLI image and explicitly installs pcntl
-# plus all other extensions required by Laravel + Mixpost + Horizon.
-#
-# To use this instead of nixpacks.toml:
-#   - Keep this file as-is
-#   - Delete or rename nixpacks.toml
-#   Railway will auto-detect the Dockerfile.
+# PHP 8.2 with ALL extensions required by Laravel + Mixpost + Horizon.
+# Extensions added: pdo_mysql, redis (PECL), opcache, sockets, mbstring.
 
 FROM php:8.2-cli
 
-# Install system dependencies and ALL required PHP extensions in one layer
+# ── System libraries ──────────────────────────────────────────────────────────
+# libpq-dev      → pdo_pgsql / pgsql
+# libzip-dev     → zip
+# libxml2-dev    → xml
+# libpng-dev     → gd
+# libonig-dev    → mbstring
+# libmariadb-dev → pdo_mysql (MariaDB-compatible MySQL client)
+# autoconf/make  → needed by PECL (redis build)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git curl zip unzip \
+        git \
+        curl \
+        zip \
+        unzip \
+        autoconf \
+        make \
+        g++ \
         libpq-dev \
         libzip-dev \
         libxml2-dev \
         libpng-dev \
         libonig-dev \
-    && docker-php-ext-install \
+        libmariadb-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Built-in PHP extensions (docker-php-ext-install) ─────────────────────────
+RUN docker-php-ext-install \
         pcntl \
         pdo \
         pdo_pgsql \
         pgsql \
+        pdo_mysql \
         mbstring \
+        sockets \
         exif \
         bcmath \
         xml \
         zip \
         fileinfo \
-        gd \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+        gd
 
-# Install Composer 2
+# ── OPcache (already compiled into PHP — just enable it) ─────────────────────
+RUN docker-php-ext-enable opcache \
+    && echo "opcache.enable=1"            >> /usr/local/etc/php/conf.d/opcache.ini \
+    && echo "opcache.memory_consumption=128" >> /usr/local/etc/php/conf.d/opcache.ini \
+    && echo "opcache.validate_timestamps=0"  >> /usr/local/etc/php/conf.d/opcache.ini
+
+# ── Redis (PECL — not available via docker-php-ext-install) ──────────────────
+RUN pecl install redis \
+    && docker-php-ext-enable redis \
+    && rm -rf /tmp/pear
+
+# ── Composer 2 ────────────────────────────────────────────────────────────────
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
+# ── Application ───────────────────────────────────────────────────────────────
 WORKDIR /var/www
 
-# Copy project files
 COPY . .
 
-# Install PHP dependencies (no dev, optimised autoloader)
+# Install PHP dependencies (production, no dev packages)
 RUN composer install --no-dev --optimize-autoloader --no-interaction
 
-# Publish Mixpost assets/migrations (best-effort — no .env yet at build time)
+# Publish Mixpost package assets + migrations (best-effort at build time)
 RUN php artisan mixpost:publish --no-interaction 2>/dev/null || true
 
 EXPOSE 8080
 
-# At runtime Railway injects all env vars; migrate then serve
-CMD ["/bin/bash", "-c", "php artisan migrate --force --no-interaction && php artisan config:cache && php artisan route:cache && php artisan serve --host=0.0.0.0 --port=${PORT:-8080}"]
+# ── Runtime entrypoint ────────────────────────────────────────────────────────
+# Railway injects all env vars at runtime.
+# Order: migrate → cache config+routes → start server on $PORT.
+CMD ["/bin/bash", "-c", \
+    "php artisan migrate --force --no-interaction \
+     && php artisan config:cache \
+     && php artisan route:cache \
+     && php artisan serve --host=0.0.0.0 --port=${PORT:-8080}"]
