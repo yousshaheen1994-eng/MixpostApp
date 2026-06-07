@@ -1,0 +1,40 @@
+# nixpacks.toml — Railway deployment configuration
+#
+# Primary fix: adds the `pcntl` PHP extension (required by Laravel Horizon)
+# along with all other extensions this app needs.
+#
+# Railway uses this file automatically when no Dockerfile is present.
+# If nixpacks fails, delete this file and use the Dockerfile instead.
+
+[phases.setup]
+nixPkgs = [
+    "php82",
+    "php82Extensions.pcntl",
+    "php82Extensions.pdo_pgsql",
+    "php82Extensions.pgsql",
+    "php82Extensions.mbstring",
+    "php82Extensions.xml",
+    "php82Extensions.curl",
+    "php82Extensions.zip",
+    "php82Extensions.bcmath",
+    "php82Extensions.fileinfo",
+    "php82Extensions.tokenizer",
+    "php82Extensions.openssl",
+    "php82Extensions.ctype",
+    "php82Extensions.gd",
+    "php82Extensions.exif",
+    "composer"
+]
+
+[phases.install]
+cmds = [
+    "composer install --no-dev --optimize-autoloader --no-interaction"
+]
+
+[phases.build]
+cmds = [
+    "php artisan mixpost:publish --no-interaction || true"
+]
+
+[start]
+cmd = "php artisan migrate --force --no-interaction && php artisan config:cache && php artisan route:cache && php artisan serve --host=0.0.0.0 --port=${PORT:-8080}"
