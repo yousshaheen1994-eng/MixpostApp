@@ -1,0 +1,1 @@
+- [Mixpost migration publishing](mixpost-migrations.md) — Mixpost ships migrations inside the vendor package; they must be published via `mixpost:publish` before `migrate` or Mixpost tables won't exist.
